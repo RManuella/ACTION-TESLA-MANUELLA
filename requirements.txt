@@ -1,4 +1,5 @@
-yfinance>=0.2.36
+yfinance>=0.2.40
+curl_cffi
 streamlit
 pandas
 numpy
@@ -7,3 +8,4 @@ requests
 urllib3
 torch
 scikit-learn
+
