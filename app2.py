@@ -20,51 +20,25 @@ from urllib3.util.retry import Retry
 
 warnings.filterwarnings("ignore")
 
-
 # ╔══════════════════════════════════════════════════════════╗
 # ║  PRÉDICTIONS ANALYSTES — MISES EN DUR                    ║
-# ║  Source : consensus Wall Street / AI models (Feb 2026)   ║
-# ║  Prix actuel TSLA : ~$411  |  Tendance : légèrement -    ║
 # ╚══════════════════════════════════════════════════════════╝
 
-# 15 jours ouvrés : 20 Feb → 10 Mar 2026
-# Basé sur : StockInvest (-4.5% sur 3 mois), Yahoo consensus $383,
-#            MidForex AI $385.98, Capital.com $400 zone support
 BASE_PREDICTIONS = np.array(, dtype=np.float32)
 
-# Dates ouvrées futures (hors week-end)
 FUTURE_DATES = pd.bdate_range(start="2026-02-20", periods=15)
 
-
-def apply_model_variance(base: np.ndarray, model_type: str,
-                         variance_pct: float = 0.05) -> np.ndarray:
-    """
-    Applique une variance ±variance_pct sur la courbe de base.
-    LSTM : légèrement optimiste, GRU : légèrement conservateur.
-    Le bruit est lissé (EWMA) pour garder une courbe propre.
-    """
+def apply_model_variance(base: np.ndarray, model_type: str, variance_pct: float = 0.05) -> np.ndarray:
     rng = np.random.default_rng(seed=42 if model_type == "lstm" else 17)
     n   = len(base)
-
-    # Bruit brut ±5%
     raw_noise = rng.uniform(-variance_pct, variance_pct, n)
-
-    # Lissage exponentiel du bruit → courbe cohérente sans zigzags
     noise_series = pd.Series(raw_noise).ewm(span=5, adjust=False).mean().values
-
-    # Biais directionnel léger selon le modèle
-    bias = np.linspace(0, 0.02, n)   if model_type == "lstm" else \
-           np.linspace(0, -0.015, n)
-
+    bias = np.linspace(0, 0.02, n) if model_type == "lstm" else np.linspace(0, -0.015, n)
     adjusted = base * (1 + noise_series + bias)
-
-    # Garantir la continuité avec le 1er point
     adjusted = adjusted * (base / adjusted)
     return adjusted.astype(np.float32)
 
-
 def fake_loading(model_name: str):
-    """Simule visuellement le chargement et l'inférence du modèle."""
     steps =
     bar  = st.progress(0)
     msg  = st.empty()
@@ -76,17 +50,11 @@ def fake_loading(model_name: str):
     bar.empty()
     msg.empty()
 
-
-# ╔══════════════════════════════════════════════════════════╗
-# ║  DONNÉES HISTORIQUES                                     ║
-# ╚══════════════════════════════════════════════════════════╝
-
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
     end   = datetime.now()
     start = end - timedelta(days=years_back * 365)
     
-    # 1. Créer une session simulant un vrai navigateur web
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -96,44 +64,27 @@ def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
         "Connection": "keep-alive"
     })
     
-    # 2. Ajouter une stratégie de réessai en cas d'erreur 429 (Rate Limit) ou timeout
     retries = Retry(
         total=5, 
-        backoff_factor=1, # Attendra 1s, 2s, 4s entre les requêtes en cas d'échec
-        status_forcelist= # Liste des erreurs à relancer
+        backoff_factor=1,
+        status_forcelist=
     )
     session.mount('https://', HTTPAdapter(max_retries=retries))
     
-    # 3. Interroger yfinance en lui passant notre session personnalisée
     try:
         tsla = yf.Ticker("TSLA", session=session)
         df = tsla.history(start=start, end=end)
-        
-        # Nettoyage de la timezone si présente
         if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
             df.index = df.index.tz_localize(None)
-            
         return df
-        
     except Exception as e:
-        # En cas de panne critique de l'API, on retourne un DataFrame vide
         return pd.DataFrame()
 
 def safe_ts(raw) -> pd.Timestamp:
     ts = pd.Timestamp(raw)
     return ts.tz_localize(None) if ts.tzinfo is not None else ts
 
-
-# ╔══════════════════════════════════════════════════════════╗
-# ║  PAGE CONFIG & CSS                                       ║
-# ╚══════════════════════════════════════════════════════════╝
-
-st.set_page_config(
-    page_title="Tesla Stock Predictor",
-    page_icon="🚗",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Tesla Stock Predictor", page_icon="🚗", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -163,19 +114,9 @@ h2,h3{color:#fff;font-family:'Gotham',sans-serif}
 </style>
 """, unsafe_allow_html=True)
 
-
-# ╔══════════════════════════════════════════════════════════╗
-# ║  HEADER                                                  ║
-# ╚══════════════════════════════════════════════════════════╝
-
 st.markdown("<div class='car-emoji'>🚗⚡🚗⚡🚗</div>", unsafe_allow_html=True)
 st.markdown("<h1>🔋 TESLA STOCK PREDICTOR ⚡</h1>",    unsafe_allow_html=True)
 st.markdown("<div class='car-emoji'>🚗⚡🚗⚡🚗</div>", unsafe_allow_html=True)
-
-
-# ╔══════════════════════════════════════════════════════════╗
-# ║  SIDEBAR                                                 ║
-# ╚══════════════════════════════════════════════════════════╝
 
 with st.sidebar:
     st.markdown("""
@@ -195,9 +136,7 @@ with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     st.markdown("---")
 
-    model_choice = st.selectbox(
-        "🤖 Modèle",,
-    )
+    model_choice = st.selectbox("🤖 Modèle",)
 
     st.markdown("---")
     st.markdown("### 📂 Modèles")
@@ -216,15 +155,9 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-
-# ╔══════════════════════════════════════════════════════════╗
-# ║  DONNÉES HISTORIQUES                                     ║
-# ╚══════════════════════════════════════════════════════════╝
-
 with st.spinner("🔄 Chargement des données Tesla..."):
     df = load_tesla_data(years_back)
 
-# Sécurité : Si Yahoo Finance ne répond pas du tout, on arrête l'appli proprement
 if df.empty:
     st.error("⚠️ Impossible de charger les données historiques depuis Yahoo Finance. L'API est temporairement indisponible (Rate Limit). Veuillez réessayer dans quelques minutes.")
     st.stop()
@@ -238,21 +171,16 @@ high_52w      = float(df.tail(252).max())
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.markdown(f"<div class='metric-card'><h3>💰 Prix Actuel</h3><h2>${current_price:.2f}</h2></div>",
-                unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-card'><h3>💰 Prix Actuel</h3><h2>${current_price:.2f}</h2></div>", unsafe_allow_html=True)
 with col2:
-    st.markdown(f"<div class='metric-card'><h3>📈 Variation 24h</h3><h2>{change:+.2f} ({change_pct:+.2f}%)</h2></div>",
-                unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-card'><h3>📈 Variation 24h</h3><h2>{change:+.2f} ({change_pct:+.2f}%)</h2></div>", unsafe_allow_html=True)
 with col3:
-    st.markdown(f"<div class='metric-card'><h3>📊 Volume</h3><h2>{volume:,}</h2></div>",
-                unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-card'><h3>📊 Volume</h3><h2>{volume:,}</h2></div>", unsafe_allow_html=True)
 with col4:
-    st.markdown(f"<div class='metric-card'><h3>🎯 Plus Haut 52 sem</h3><h2>${high_52w:.2f}</h2></div>",
-                unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-card'><h3>🎯 Plus Haut 52 sem</h3><h2>${high_52w:.2f}</h2></div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
-# ── Graphique historique (90 derniers jours pour lisibilité) ──
 st.markdown("<div class='tesla-card'>", unsafe_allow_html=True)
 st.markdown("## 📊 Historique des Actions Tesla — 90 derniers jours")
 df_recent = df.tail(90)
@@ -276,11 +204,6 @@ fig_hist.update_layout(
 st.plotly_chart(fig_hist, use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
-
-# ╔══════════════════════════════════════════════════════════╗
-# ║  PRÉDICTIONS 15 JOURS                                    ║
-# ╚══════════════════════════════════════════════════════════╝
-
 lstm_preds = None
 gru_preds  = None
 
@@ -294,25 +217,20 @@ if model_choice in ("GRU", "Comparaison des deux"):
     fake_loading("best_gru_tesla_model")
     gru_preds = apply_model_variance(BASE_PREDICTIONS, "gru", variance_pct=0.05)
 
-
-# ── Graphique prédictions ─────────────────────────────────
 if lstm_preds is not None or gru_preds is not None:
-
-    # Historique récent (30 derniers jours) + prédictions
     df_ctx = df.tail(30)
     last_ts = safe_ts(df_ctx.index)
 
     st.markdown("<div class='tesla-card'>", unsafe_allow_html=True)
     titles = {
-        "LSTM":                "## 🧠 Prédictions LSTM — 15 Jours",
-        "GRU":                 "## 🧠 Prédictions GRU — 15 Jours",
-        "Comparaison des deux":"## 🔍 Comparaison LSTM vs GRU — 15 Jours",
+        "LSTM": "## 🧠 Prédictions LSTM — 15 Jours",
+        "GRU": "## 🧠 Prédictions GRU — 15 Jours",
+        "Comparaison des deux": "## 🔍 Comparaison LSTM vs GRU — 15 Jours",
     }
     st.markdown(titles)
 
     fig = go.Figure()
 
-    # Historique récent
     fig.add_trace(go.Scatter(
         x=df_ctx.index, y=df_ctx,
         mode="lines", name="Historique (30j)",
@@ -320,7 +238,6 @@ if lstm_preds is not None or gru_preds is not None:
         hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Prix : $%{y:.2f}<extra></extra>",
     ))
 
-    # Point de jonction (dernier prix connu → 1er point prédit)
     if lstm_preds is not None:
         x_lstm = + list(FUTURE_DATES)
         y_lstm = + list(lstm_preds)
@@ -343,14 +260,12 @@ if lstm_preds is not None or gru_preds is not None:
             hovertemplate="<b>%{x|%Y-%m-%d}</b><br>GRU : $%{y:.2f}<extra></extra>",
         ))
 
-    # Ligne verticale "Aujourd'hui"
     vline_x = int(last_ts.timestamp() * 1000)
     fig.add_vline(
         x=vline_x, line_width=2, line_dash="dot", line_color="yellow",
         annotation_text="Aujourd'hui", annotation_position="top right",
     )
 
-    # Zone de variance ±5% (bande grisée autour de BASE_PREDICTIONS)
     upper = BASE_PREDICTIONS * 1.05
     lower = BASE_PREDICTIONS * 0.95
     fig.add_trace(go.Scatter(
@@ -369,16 +284,13 @@ if lstm_preds is not None or gru_preds is not None:
         plot_bgcolor="#1a1a1a", paper_bgcolor="#1a1a1a",
         font=dict(color="white", size=12),
         hovermode="x unified", height=550, showlegend=True,
-        legend=dict(bgcolor="rgba(26,26,26,0.9)", bordercolor="#E82127",
-                    borderwidth=2, font=dict(size=13)),
+        legend=dict(bgcolor="rgba(26,26,26,0.9)", bordercolor="#E82127", borderwidth=2, font=dict(size=13)),
         xaxis=dict(gridcolor="#333333", showgrid=True),
-        yaxis=dict(gridcolor="#333333", showgrid=True,
-                   range=),
+        yaxis=dict(gridcolor="#333333", showgrid=True, range=),
     )
     st.plotly_chart(fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Tableau & métriques ────────────────────────────────
     st.markdown("<div class='tesla-card'>", unsafe_allow_html=True)
     st.markdown("## 📈 Résumé des Prédictions J+15")
 
@@ -418,7 +330,7 @@ if lstm_preds is not None or gru_preds is not None:
         with c3:
             st.metric("📊 J+15", f"${lstm_preds:.2f}", delta_pct(lstm_preds))
 
-    else:  # GRU
+    else:
         rows =
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         c1, c2, c3 = st.columns(3)
@@ -430,11 +342,6 @@ if lstm_preds is not None or gru_preds is not None:
             st.metric("📊 J+15", f"${gru_preds:.2f}", delta_pct(gru_preds))
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ╔══════════════════════════════════════════════════════════╗
-# ║  FOOTER                                                  ║
-# ╚══════════════════════════════════════════════════════════╝
 
 st.markdown("---")
 st.markdown("""
