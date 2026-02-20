@@ -61,22 +61,43 @@ class GRUModel(nn.Module):
 # ║  FONCTIONS DE CHARGEMENT ET PRÉDICTION RÉELLES           ║
 # ╚══════════════════════════════════════════════════════════╝
 
+def infer_dims_from_state_dict(state_dict, model_type):
+    """Déduit automatiquement hidden_dim et num_layers depuis les poids sauvegardés."""
+    key = "lstm.weight_hh_l0" if model_type == "LSTM" else "gru.weight_hh_l0"
+    if key in state_dict:
+        # weight_hh_l0 shape: (num_gates * hidden_dim, hidden_dim)
+        # hidden_dim = nb de colonnes (dimension cachée réelle)
+        hidden_dim = state_dict[key].shape[1]
+        # Compter le nombre de couches
+        num_layers = 0
+        layer_prefix = "lstm" if model_type == "LSTM" else "gru"
+        while f"{layer_prefix}.weight_hh_l{num_layers}" in state_dict:
+            num_layers += 1
+        return hidden_dim, max(num_layers, 1)
+    return 50, 2  # valeurs par défaut de secours
+
+
 @st.cache_resource
 def load_pytorch_model(model_path, model_type):
-    """Charge le modèle PyTorch."""
+    """Charge le modèle PyTorch en détectant automatiquement l'architecture."""
     if not os.path.exists(model_path):
         return None
 
     try:
-        model_data = torch.load(model_path, map_location=torch.device('cpu'))
+        model_data = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
 
         if isinstance(model_data, (dict, collections.OrderedDict)):
+            # Auto-détection des dimensions depuis le checkpoint
+            hidden_dim, num_layers = infer_dims_from_state_dict(model_data, model_type)
+            st.info(f"🔍 Architecture détectée — {model_type}: hidden_dim={hidden_dim}, num_layers={num_layers}")
+
             if model_type == "LSTM":
-                model = LSTMModel()
+                model = LSTMModel(hidden_dim=hidden_dim, num_layers=num_layers)
             else:
-                model = GRUModel()
+                model = GRUModel(hidden_dim=hidden_dim, num_layers=num_layers)
             model.load_state_dict(model_data)
         else:
+            # Modèle complet sauvegardé directement
             model = model_data
 
         model.eval()
@@ -262,24 +283,26 @@ gru_preds_real  = None
 st.markdown("<div class='tesla-card'><h2>🧠 Génération des Prédictions (15 Jours)</h2>", unsafe_allow_html=True)
 
 if model_choice in ("LSTM", "Comparaison des deux"):
-    lstm_model = load_pytorch_model("best_tesla_LSTM_model.pt", "LSTM")
-    if lstm_model:
-        st.info("⚡ Inférence LSTM en cours...")
-        scaled_preds = predict_future_real(lstm_model, recent_scaled, lookback=lookback, days_to_predict=15)
-        lstm_preds_real = scaler.inverse_transform(scaled_preds.reshape(-1, 1)).flatten()
-        st.success("✅ Prédictions LSTM générées !")
-    else:
+    if not os.path.exists("best_tesla_LSTM_model.pt"):
         st.warning("⚠️ Fichier 'best_tesla_LSTM_model.pt' introuvable dans le dossier courant !")
+    else:
+        lstm_model = load_pytorch_model("best_tesla_LSTM_model.pt", "LSTM")
+        if lstm_model:
+            st.info("⚡ Inférence LSTM en cours...")
+            scaled_preds = predict_future_real(lstm_model, recent_scaled, lookback=lookback, days_to_predict=15)
+            lstm_preds_real = scaler.inverse_transform(scaled_preds.reshape(-1, 1)).flatten()
+            st.success("✅ Prédictions LSTM générées !")
 
 if model_choice in ("GRU", "Comparaison des deux"):
-    gru_model = load_pytorch_model("best_gru_tesla_model.pt", "GRU")
-    if gru_model:
-        st.info("⚡ Inférence GRU en cours...")
-        scaled_preds = predict_future_real(gru_model, recent_scaled, lookback=lookback, days_to_predict=15)
-        gru_preds_real = scaler.inverse_transform(scaled_preds.reshape(-1, 1)).flatten()
-        st.success("✅ Prédictions GRU générées !")
-    else:
+    if not os.path.exists("best_gru_tesla_model.pt"):
         st.warning("⚠️ Fichier 'best_gru_tesla_model.pt' introuvable dans le dossier courant !")
+    else:
+        gru_model = load_pytorch_model("best_gru_tesla_model.pt", "GRU")
+        if gru_model:
+            st.info("⚡ Inférence GRU en cours...")
+            scaled_preds = predict_future_real(gru_model, recent_scaled, lookback=lookback, days_to_predict=15)
+            gru_preds_real = scaler.inverse_transform(scaled_preds.reshape(-1, 1)).flatten()
+            st.success("✅ Prédictions GRU générées !")
 
 # ── Graphique comparatif des prédictions ──────────────────────────
 if lstm_preds_real is not None or gru_preds_real is not None:
