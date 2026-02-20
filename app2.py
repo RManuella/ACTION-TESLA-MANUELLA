@@ -14,6 +14,10 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 warnings.filterwarnings("ignore")
 
 
@@ -105,11 +109,40 @@ def fake_loading(model_name: str):
 def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
     end   = datetime.now()
     start = end - timedelta(days=years_back * 365)
-    df    = yf.Ticker("TSLA").history(start=start, end=end)
-    if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
-    return df
-
+    
+    # 1. Créer une session simulant un vrai navigateur web
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive"
+    })
+    
+    # 2. Ajouter une stratégie de réessai en cas d'erreur 429 (Rate Limit) ou timeout
+    retries = Retry(
+        total=5, 
+        backoff_factor=1, # Attendra 1s, 2s, 4s entre les requêtes en cas d'échec
+        status_forcelist=
+    )
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    
+    # 3. Interroger yfinance en lui passant notre session personnalisée
+    try:
+        tsla = yf.Ticker("TSLA", session=session)
+        df = tsla.history(start=start, end=end)
+        
+        # Nettoyage de la timezone si présente
+        if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+            
+        return df
+        
+    except Exception as e:
+        st.error(f"⚠️ Impossible de récupérer les données depuis Yahoo Finance : {e}")
+        # En cas de panne critique de l'API, on retourne un DataFrame vide pour éviter le crash de l'app
+        return pd.DataFrame()
 
 def safe_ts(raw) -> pd.Timestamp:
     ts = pd.Timestamp(raw)
