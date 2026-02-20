@@ -15,9 +15,6 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 import torch
 import torch.nn as nn
@@ -116,19 +113,15 @@ def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
     end = datetime.now()
     start = end - timedelta(days=years_back * 365)
 
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    })
-
-    # FIX: added proper status_forcelist
-    retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-    session.mount('https://', HTTPAdapter(max_retries=retries))
-
     try:
-        tsla = yf.Ticker("TSLA", session=session)
-        df = tsla.history(start=start, end=end)
+        # FIX: Ne jamais passer de session custom à yfinance — il gère curl_cffi en interne
+        df = yf.download("TSLA", start=start, end=end, progress=False, auto_adjust=True)
+        if df.empty:
+            raise ValueError("DataFrame vide retourné par yfinance.")
+        # Aplatir les colonnes MultiIndex si nécessaire (yfinance >= 0.2.x)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        # Supprimer le timezone de l'index
         if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
             df.index = df.index.tz_localize(None)
         return df
