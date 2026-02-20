@@ -6,6 +6,7 @@ Prédictions 15 jours issues de vos modèles PyTorch (LSTM et GRU)
 import time
 import warnings
 import os
+import collections
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -25,11 +26,10 @@ from sklearn.preprocessing import MinMaxScaler
 
 warnings.filterwarnings("ignore")
 
+
 # ╔══════════════════════════════════════════════════════════╗
 # ║  DÉFINITION DES ARCHITECTURES DE VOS MODÈLES PYTORCH     ║
 # ╚══════════════════════════════════════════════════════════╝
-# Note: Si vos modèles ont été entraînés avec une architecture différente, 
-# vous pouvez ajuster 'hidden_dim' ou 'num_layers' ici.
 
 class LSTMModel(nn.Module):
     def __init__(self, input_dim=1, hidden_dim=50, num_layers=2, output_dim=1):
@@ -67,21 +67,24 @@ class GRUModel(nn.Module):
 
 @st.cache_resource
 def load_pytorch_model(model_path, model_type):
-    """Charge le modèle PyTorch. Gère à la fois le modèle complet et le state_dict."""
+    """Charge le modèle PyTorch."""
     if not os.path.exists(model_path):
         return None
         
     try:
-        # Essaye de charger le modèle complet
-        model = torch.load(model_path, map_location=torch.device('cpu'))
-        if isinstance(model, dict):
-            # Si c'est un dictionnaire, c'est un state_dict
+        model_data = torch.load(model_path, map_location=torch.device('cpu'))
+        
+        # Si le fichier contient juste les poids (state_dict)
+        if isinstance(model_data, dict) or isinstance(model_data, collections.OrderedDict):
             if model_type == "LSTM":
                 model = LSTMModel()
             else:
                 model = GRUModel()
-            model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-        
+            model.load_state_dict(model_data)
+        else:
+            # Si le fichier contient le modèle entier
+            model = model_data
+            
         model.eval() # Mode évaluation
         return model
     except Exception as e:
@@ -89,21 +92,20 @@ def load_pytorch_model(model_path, model_type):
         return None
 
 def predict_future_real(model, recent_data_scaled, days_to_predict=15):
-    """Effectue des prédictions jour par jour (autorégressif)."""
+    """Effectue des prédictions jour par jour (fenêtre glissante autorégressive)."""
     predictions =[]
-    # Création d'une copie pour ne pas modifier la donnée d'origine
     current_seq = recent_data_scaled.copy()
     
     with torch.no_grad():
         for _ in range(days_to_predict):
-            # Format attendu par PyTorch: (batch_size, seq_len, features) -> (1, lookback, 1)
+            # Transformation en Tenseur PyTorch: shape (1, lookback, 1)
             x_tensor = torch.tensor(current_seq, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
             
-            # Prédiction du prochain jour
+            # Prédiction du jour suivant
             pred = model(x_tensor).item()
             predictions.append(pred)
             
-            # Mise à jour de la séquence: on enlève le 1er jour, on ajoute la prédiction
+            # Décalage de la fenêtre : on retire le 1er jour, on ajoute la nouvelle prédiction à la fin
             current_seq = np.append(current_seq, pred)
             
     return np.array(predictions)
@@ -120,7 +122,7 @@ def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
     
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     })
     
@@ -173,22 +175,22 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🎛️ Paramètres Inférence")
     years_back = st.slider("📅 Historique global (années)", 1, 6, 6)
-    lookback = st.slider("🔍 Fenêtre de séquence (Lookback)", 30, 100, 60, help="Nombre de jours fournis à l'IA pour prédire le lendemain. (Généralement 60 jours en LSTM)")
+    lookback = st.slider("🔍 Fenêtre de séquence (Lookback)", 30, 100, 60, help="Nombre de jours fournis à l'IA pour prédire le lendemain. Mettez la même valeur que celle utilisée pendant votre entraînement (souvent 60).")
     st.markdown("---")
-    st.success("✅ Architecture PyTorch intégrée")
+    st.success("✅ Vos propres modèles PyTorch sont connectés !")
 
 with st.spinner("🔄 Téléchargement des données Tesla..."):
     df = load_tesla_data(years_back)
 
 if df.empty:
-    st.error("⚠️ Impossible de charger les données (Yahoo Finance).")
+    st.error("⚠️ Impossible de charger les données (Yahoo Finance/Rate Limit). Réessayez plus tard.")
     st.stop()
 
-# Dynamiser les futures dates à partir d'aujourd'hui
-last_date = df.index
+# Création des dates futures (uniquement les jours ouvrés)
+last_date = safe_ts(df.index)
 FUTURE_DATES = pd.bdate_range(start=last_date + timedelta(days=1), periods=15)
 
-# Métriques rapides
+# Métriques du haut
 current_price = float(df.iloc)
 prev_price    = float(df.iloc)
 change        = current_price - prev_price
@@ -197,6 +199,98 @@ volume        = int(df.iloc)
 high_52w      = float(df.tail(252).max())
 
 col1, col2, col3, col4 = st.columns(4)
-col1.markdown(f"<div class='metric-card'><h3>💰 Prix Actuel</h3><h2>${current_price:.2f}</h2></div>", unsafe_allow_html=True)
-col2.markdown(f"<div class='metric-card'><h3>📈 Variation 24h</h3><h2>{change:+.2f} ({change_pct:+.2f}%)</h2></div>", unsafe_allow_html=True)
-col3.markdown(f"<div class='metric-card'><h3>📊 Volume</h3><h2>{volume:,}</h2></div
+with col1:
+    st.markdown(f"<div class='metric-card'><h3>💰 Prix Actuel</h3><h2>${current_price:.2f}</h2></div>", unsafe_allow_html=True)
+with col2:
+    st.markdown(f"<div class='metric-card'><h3>📈 Variation 24h</h3><h2>{change:+.2f} ({change_pct:+.2f}%)</h2></div>", unsafe_allow_html=True)
+with col3:
+    st.markdown(f"<div class='metric-card'><h3>📊 Volume</h3><h2>{volume:,}</h2></div>", unsafe_allow_html=True)
+with col4:
+    st.markdown(f"<div class='metric-card'><h3>🎯 Plus Haut 52 sem</h3><h2>${high_52w:.2f}</h2></div>", unsafe_allow_html=True)
+
+st.markdown("---")
+
+# Graphique Historique
+st.markdown("<div class='tesla-card'><h2>📊 Historique — 90 derniers jours</h2>", unsafe_allow_html=True)
+df_recent = df.tail(90)
+fig_hist = go.Figure(go.Scatter(x=df_recent.index, y=df_recent, line=dict(color="#00BFFF", width=2.5), fill="tozeroy"))
+fig_hist.update_layout(plot_bgcolor="#1a1a1a", paper_bgcolor="#1a1a1a", font=dict(color="white"), height=400)
+st.plotly_chart(fig_hist, use_container_width=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ╔══════════════════════════════════════════════════════════╗
+# ║  INFERENCE IA (VRAIES PRÉDICTIONS PYTORCH)               ║
+# ╚══════════════════════════════════════════════════════════╝
+
+# Préparation des données pour le réseau de neurones
+prices = df.values.reshape(-1, 1)
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_prices = scaler.fit_transform(prices)
+
+# On extrait les X derniers jours correspondants au 'lookback' (par défaut 60)
+recent_scaled = scaled_prices.flatten()
+
+lstm_preds_real = None
+gru_preds_real  = None
+
+st.markdown("<div class='tesla-card'><h2>🧠 Génération des Prédictions (15 Jours)</h2>", unsafe_allow_html=True)
+
+if model_choice in ("LSTM", "Comparaison des deux"):
+    lstm_model = load_pytorch_model("best_tesla_LSTM_model.pt", "LSTM")
+    if lstm_model:
+        st.info("⚡ Inférence LSTM en cours...")
+        scaled_preds = predict_future_real(lstm_model, recent_scaled, days_to_predict=15)
+        # On dénormalise pour retrouver les dollars ($)
+        lstm_preds_real = scaler.inverse_transform(scaled_preds.reshape(-1, 1)).flatten()
+    else:
+        st.warning("⚠️ Fichier 'best_tesla_LSTM_model.pt' introuvable dans le dossier GitHub !")
+
+if model_choice in ("GRU", "Comparaison des deux"):
+    gru_model = load_pytorch_model("best_gru_tesla_model.pt", "GRU")
+    if gru_model:
+        st.info("⚡ Inférence GRU en cours...")
+        scaled_preds = predict_future_real(gru_model, recent_scaled, days_to_predict=15)
+        gru_preds_real = scaler.inverse_transform(scaled_preds.reshape(-1, 1)).flatten()
+    else:
+        st.warning("⚠️ Fichier 'best_gru_tesla_model.pt' introuvable dans le dossier GitHub !")
+
+# ── Graphique comparatif des prédictions réelles ──────────────────
+if lstm_preds_real is not None or gru_preds_real is not None:
+    df_ctx = df.tail(30)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df_ctx.index, y=df_ctx, name="Historique (30j)", line=dict(color="#00BFFF", width=3)))
+
+    # Coordonnées X (on relie le dernier jour connu aux 15 jours suivants)
+    x_pred = + list(FUTURE_DATES)
+
+    if lstm_preds_real is not None:
+        y_lstm = + list(lstm_preds_real)
+        fig.add_trace(go.Scatter(x=x_pred, y=y_lstm, name="AI LSTM", line=dict(color="#E82127", width=3, dash="dash"), marker=dict(size=6)))
+
+    if gru_preds_real is not None:
+        y_gru = + list(gru_preds_real)
+        fig.add_trace(go.Scatter(x=x_pred, y=y_gru, name="AI GRU", line=dict(color="#00AAFF", width=3, dash="dash"), marker=dict(size=6)))
+
+    fig.add_vline(x=last_date.timestamp() * 1000, line_dash="dot", line_color="yellow", annotation_text="Aujourd'hui")
+    fig.update_layout(plot_bgcolor="#1a1a1a", paper_bgcolor="#1a1a1a", font=dict(color="white"), height=500, hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tableaux des vraies prédictions ──────────────────
+    st.markdown("### 📈 Tableau des prix projetés ($)")
+    
+    rows =[]
+    for i, date in enumerate(FUTURE_DATES):
+        row = {"Date": date.strftime("%d %b %Y")}
+        if lstm_preds_real is not None:
+            row = f"${lstm_preds_real:.2f}"
+            row = f"{(lstm_preds_real - current_price)/current_price*100:+.2f}%"
+        if gru_preds_real is not None:
+            row = f"${gru_preds_real:.2f}"
+            row = f"{(gru_preds_real - current_price)/current_price*100:+.2f}%"
+        rows.append(row)
+        
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
