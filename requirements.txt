@@ -1,5 +1,7 @@
+yfinance>=0.2.36
 streamlit
 pandas
 numpy
-yfinance
 plotly
+requests
+urllib3
