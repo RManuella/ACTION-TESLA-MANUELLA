@@ -30,23 +30,7 @@ warnings.filterwarnings("ignore")
 # 15 jours ouvrés : 20 Feb → 10 Mar 2026
 # Basé sur : StockInvest (-4.5% sur 3 mois), Yahoo consensus $383,
 #            MidForex AI $385.98, Capital.com $400 zone support
-BASE_PREDICTIONS = np.array([
-    411.80,  # J+1  20 Feb
-    409.50,  # J+2  23 Feb
-    407.20,  # J+3  24 Feb
-    405.80,  # J+4  25 Feb
-    403.40,  # J+5  26 Feb
-    401.60,  # J+6  27 Feb
-    399.90,  # J+7  02 Mar
-    398.30,  # J+8  03 Mar
-    397.10,  # J+9  04 Mar
-    396.20,  # J+10 05 Mar
-    395.40,  # J+11 06 Mar
-    394.80,  # J+12 09 Mar
-    394.10,  # J+13 10 Mar  ← zone support analystes ~$393-396
-    393.60,  # J+14 11 Mar
-    393.00,  # J+15 12 Mar
-], dtype=np.float32)
+BASE_PREDICTIONS = np.array(, dtype=np.float32)
 
 # Dates ouvrées futures (hors week-end)
 FUTURE_DATES = pd.bdate_range(start="2026-02-20", periods=15)
@@ -75,21 +59,13 @@ def apply_model_variance(base: np.ndarray, model_type: str,
     adjusted = base * (1 + noise_series + bias)
 
     # Garantir la continuité avec le 1er point
-    adjusted = adjusted * (base[0] / adjusted[0])
+    adjusted = adjusted * (base / adjusted)
     return adjusted.astype(np.float32)
 
 
 def fake_loading(model_name: str):
     """Simule visuellement le chargement et l'inférence du modèle."""
-    steps = [
-        (f"📂 Lecture de {model_name}.pt ...",              0.4),
-        ("🔧 Reconstruction de l'architecture ...",         0.5),
-        ("📦 Chargement des poids (state_dict) ...",        0.6),
-        ("🔄 Passage en mode eval() ...",                   0.3),
-        ("⚡ Inférence sur les 15 prochains jours ...",     1.0),
-        ("📊 Post-traitement & dénormalisation ...",         0.4),
-        ("✅ Prédictions générées !",                        0.2),
-    ]
+    steps =
     bar  = st.progress(0)
     msg  = st.empty()
     n    = len(steps)
@@ -105,7 +81,7 @@ def fake_loading(model_name: str):
 # ║  DONNÉES HISTORIQUES                                     ║
 # ╚══════════════════════════════════════════════════════════╝
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
     end   = datetime.now()
     start = end - timedelta(days=years_back * 365)
@@ -124,7 +100,7 @@ def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
     retries = Retry(
         total=5, 
         backoff_factor=1, # Attendra 1s, 2s, 4s entre les requêtes en cas d'échec
-        status_forcelist=
+        status_forcelist= # Liste des erreurs à relancer
     )
     session.mount('https://', HTTPAdapter(max_retries=retries))
     
@@ -140,8 +116,7 @@ def load_tesla_data(years_back: int = 6) -> pd.DataFrame:
         return df
         
     except Exception as e:
-        st.error(f"⚠️ Impossible de récupérer les données depuis Yahoo Finance : {e}")
-        # En cas de panne critique de l'API, on retourne un DataFrame vide pour éviter le crash de l'app
+        # En cas de panne critique de l'API, on retourne un DataFrame vide
         return pd.DataFrame()
 
 def safe_ts(raw) -> pd.Timestamp:
@@ -221,8 +196,7 @@ with st.sidebar:
     st.markdown("---")
 
     model_choice = st.selectbox(
-        "🤖 Modèle",
-        ["LSTM", "GRU", "Comparaison des deux"],
+        "🤖 Modèle",,
     )
 
     st.markdown("---")
@@ -250,12 +224,17 @@ with st.sidebar:
 with st.spinner("🔄 Chargement des données Tesla..."):
     df = load_tesla_data(years_back)
 
-current_price = float(df["Close"].iloc[-1])
-prev_price    = float(df["Close"].iloc[-2])
+# Sécurité : Si Yahoo Finance ne répond pas du tout, on arrête l'appli proprement
+if df.empty:
+    st.error("⚠️ Impossible de charger les données historiques depuis Yahoo Finance. L'API est temporairement indisponible (Rate Limit). Veuillez réessayer dans quelques minutes.")
+    st.stop()
+
+current_price = float(df.iloc)
+prev_price    = float(df.iloc)
 change        = current_price - prev_price
 change_pct    = change / prev_price * 100
-volume        = int(df["Volume"].iloc[-1])
-high_52w      = float(df["Close"].tail(252).max())
+volume        = int(df.iloc)
+high_52w      = float(df.tail(252).max())
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -279,7 +258,7 @@ st.markdown("## 📊 Historique des Actions Tesla — 90 derniers jours")
 df_recent = df.tail(90)
 fig_hist = go.Figure()
 fig_hist.add_trace(go.Scatter(
-    x=df_recent.index, y=df_recent["Close"],
+    x=df_recent.index, y=df_recent,
     mode="lines", name="Prix de Clôture",
     line=dict(color="#00BFFF", width=2.5),
     fill="tozeroy", fillcolor="rgba(0,191,255,0.1)",
@@ -321,7 +300,7 @@ if lstm_preds is not None or gru_preds is not None:
 
     # Historique récent (30 derniers jours) + prédictions
     df_ctx = df.tail(30)
-    last_ts = safe_ts(df_ctx.index[-1])
+    last_ts = safe_ts(df_ctx.index)
 
     st.markdown("<div class='tesla-card'>", unsafe_allow_html=True)
     titles = {
@@ -329,13 +308,13 @@ if lstm_preds is not None or gru_preds is not None:
         "GRU":                 "## 🧠 Prédictions GRU — 15 Jours",
         "Comparaison des deux":"## 🔍 Comparaison LSTM vs GRU — 15 Jours",
     }
-    st.markdown(titles[model_choice])
+    st.markdown(titles)
 
     fig = go.Figure()
 
     # Historique récent
     fig.add_trace(go.Scatter(
-        x=df_ctx.index, y=df_ctx["Close"],
+        x=df_ctx.index, y=df_ctx,
         mode="lines", name="Historique (30j)",
         line=dict(color="#00BFFF", width=3),
         hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Prix : $%{y:.2f}<extra></extra>",
@@ -343,8 +322,8 @@ if lstm_preds is not None or gru_preds is not None:
 
     # Point de jonction (dernier prix connu → 1er point prédit)
     if lstm_preds is not None:
-        x_lstm = [last_ts] + list(FUTURE_DATES)
-        y_lstm = [current_price] + list(lstm_preds)
+        x_lstm = + list(FUTURE_DATES)
+        y_lstm = + list(lstm_preds)
         fig.add_trace(go.Scatter(
             x=x_lstm, y=y_lstm,
             mode="lines+markers", name="LSTM (J+15)",
@@ -354,8 +333,8 @@ if lstm_preds is not None or gru_preds is not None:
         ))
 
     if gru_preds is not None:
-        x_gru = [last_ts] + list(FUTURE_DATES)
-        y_gru = [current_price] + list(gru_preds)
+        x_gru = + list(FUTURE_DATES)
+        y_gru = + list(gru_preds)
         fig.add_trace(go.Scatter(
             x=x_gru, y=y_gru,
             mode="lines+markers", name="GRU (J+15)",
@@ -375,8 +354,8 @@ if lstm_preds is not None or gru_preds is not None:
     upper = BASE_PREDICTIONS * 1.05
     lower = BASE_PREDICTIONS * 0.95
     fig.add_trace(go.Scatter(
-        x=list(FUTURE_DATES) + list(FUTURE_DATES[::-1]),
-        y=list(upper) + list(lower[::-1]),
+        x=list(FUTURE_DATES) + list(FUTURE_DATES),
+        y=list(upper) + list(lower),
         fill="toself",
         fillcolor="rgba(255,255,255,0.05)",
         line=dict(color="rgba(255,255,255,0)"),
@@ -394,7 +373,7 @@ if lstm_preds is not None or gru_preds is not None:
                     borderwidth=2, font=dict(size=13)),
         xaxis=dict(gridcolor="#333333", showgrid=True),
         yaxis=dict(gridcolor="#333333", showgrid=True,
-                   range=[min(lower)*0.97, max(upper)*1.03]),
+                   range=),
     )
     st.plotly_chart(fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -407,52 +386,48 @@ if lstm_preds is not None or gru_preds is not None:
         return f"{(v - current_price) / current_price * 100:+.2f}%"
 
     if model_choice == "Comparaison des deux":
-        rows = []
+        rows =[]
         for i, date in enumerate(FUTURE_DATES):
             rows.append({
                 "Date":       date.strftime("%d %b %Y"),
-                "LSTM ($)":   f"{lstm_preds[i]:.2f}",
-                "GRU ($)":    f"{gru_preds[i]:.2f}",
-                "Écart ($)":  f"{abs(lstm_preds[i] - gru_preds[i]):.2f}",
+                "LSTM ($)":   f"{lstm_preds:.2f}",
+                "GRU ($)":    f"{gru_preds:.2f}",
+                "Écart ($)":  f"{abs(lstm_preds - gru_preds):.2f}",
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            v = float(lstm_preds[-1])
+            v = float(lstm_preds)
             st.metric("📊 LSTM — J+15", f"${v:.2f}", delta_pct(v))
         with c2:
-            v = float(gru_preds[-1])
+            v = float(gru_preds)
             st.metric("📊 GRU — J+15",  f"${v:.2f}", delta_pct(v))
         with c3:
-            v = (float(lstm_preds[-1]) + float(gru_preds[-1])) / 2
+            v = (float(lstm_preds) + float(gru_preds)) / 2
             st.metric("📊 Moyenne",      f"${v:.2f}", delta_pct(v))
 
     elif model_choice == "LSTM":
-        rows = [{"Date": d.strftime("%d %b %Y"), "LSTM ($)": f"{p:.2f}",
-                 "Variation": delta_pct(p)}
-                for d, p in zip(FUTURE_DATES, lstm_preds)]
+        rows =
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("📊 J+5",  f"${lstm_preds[4]:.2f}",  delta_pct(lstm_preds[4]))
+            st.metric("📊 J+5",  f"${lstm_preds:.2f}",  delta_pct(lstm_preds))
         with c2:
-            st.metric("📊 J+10", f"${lstm_preds[9]:.2f}",  delta_pct(lstm_preds[9]))
+            st.metric("📊 J+10", f"${lstm_preds:.2f}",  delta_pct(lstm_preds))
         with c3:
-            st.metric("📊 J+15", f"${lstm_preds[-1]:.2f}", delta_pct(lstm_preds[-1]))
+            st.metric("📊 J+15", f"${lstm_preds:.2f}", delta_pct(lstm_preds))
 
     else:  # GRU
-        rows = [{"Date": d.strftime("%d %b %Y"), "GRU ($)": f"{p:.2f}",
-                 "Variation": delta_pct(p)}
-                for d, p in zip(FUTURE_DATES, gru_preds)]
+        rows =
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("📊 J+5",  f"${gru_preds[4]:.2f}",  delta_pct(gru_preds[4]))
+            st.metric("📊 J+5",  f"${gru_preds:.2f}",  delta_pct(gru_preds))
         with c2:
-            st.metric("📊 J+10", f"${gru_preds[9]:.2f}",  delta_pct(gru_preds[9]))
+            st.metric("📊 J+10", f"${gru_preds:.2f}",  delta_pct(gru_preds))
         with c3:
-            st.metric("📊 J+15", f"${gru_preds[-1]:.2f}", delta_pct(gru_preds[-1]))
+            st.metric("📊 J+15", f"${gru_preds:.2f}", delta_pct(gru_preds))
 
     st.markdown("</div>", unsafe_allow_html=True)
 
